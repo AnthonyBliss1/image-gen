@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
     
     def refresh_image_list(self):
         self.saved_images.clear()
-        self.saved_images.addItems(os.listdir("images"))
+        self.saved_images.addItems([f for f in os.listdir("images") if f != ".gitkeep"])
         print("Image list refreshed")
 
 
@@ -143,7 +143,8 @@ class MainWindow(QMainWindow):
         #title.setStyleSheet("font-size: 14px; font-style: bold;")
 
         self.saved_images = QListWidget()
-        self.saved_images.addItems(os.listdir("images"))
+        self.saved_images.addItems([f for f in os.listdir("images") if f != ".gitkeep"])
+
 
         self.saved_images.itemDoubleClicked.connect(self.open_image)
 
