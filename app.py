@@ -5,10 +5,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import base64
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QGuiApplication, QAction
+from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtGui import QPixmap, QGuiApplication, QAction, QIcon
 from PySide6.QtWidgets import (
-    QMainWindow, QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout, QFileDialog, QDialog,
+    QMainWindow, QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QFileDialog, QDialog,
     QStackedWidget, QWidget, QSpacerItem, QSizePolicy, QListWidget, QToolBar, QInputDialog, QDialogButtonBox
 )
 
@@ -23,12 +23,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Image Gen v1.0.0")
         self.setFixedSize(400, 200)
-        # self.setFixedSize(400, 160)
 
         self.image_window = None
 
         self.stack = QStackedWidget()
+
         self.prompt_page = QWidget()
+        self.prompt_page.installEventFilter(self)
+        
         self.image_repo = QWidget()
 
         self.build_image_gen()
@@ -45,33 +47,76 @@ class MainWindow(QMainWindow):
         self.title = QLabel("Image Generator")
         self.title.setStyleSheet("font-size: 30px; font-style: italic; font-style: bold;")
 
-        spacer = QSpacerItem(20, 3, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.subtitle = QLabel("Press 'F2' to upload an image")
+        self.subtitle.setStyleSheet("font-size: 11px; font-style: italic;")
+
+        spacer = QSpacerItem(20, 15, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
         self.prompt_input = QLineEdit()
         self.prompt_input.setPlaceholderText("Describe your image...")
         self.prompt_input.setFixedWidth(350)
+        self.prompt_input.installEventFilter(self)
+
+        self.upload_btn = QPushButton("Add File")
+        self.upload_btn.setFixedWidth(60)
+        self.upload_btn.hide()
+        self.upload_btn.clicked.connect(self.upload_file)
+
+        self.hbox = QHBoxLayout()
+        self.hbox.addWidget(self.prompt_input)
+        self.hbox.addWidget(self.upload_btn)
 
         self.submit_prompt = QPushButton("✨ Generate ✨")
         self.submit_prompt.setFixedWidth(150)
 
         self.submit_prompt.clicked.connect(self.on_generate_press)
 
-        vspacer = QSpacerItem(20, 10, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        spacer2 = QSpacerItem(20, 10, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        # Just for testing, add this button so i dont have to generate images constantly
-        go_image_repo = QPushButton("Saved Images")
-        go_image_repo.setFixedWidth(150)
-        go_image_repo.clicked.connect(lambda: self.stack.setCurrentWidget(self.image_repo))
+        go_saved_images = QPushButton("Saved Images")
+        go_saved_images.setFixedWidth(150)
+        go_saved_images.clicked.connect(lambda: self.stack.setCurrentWidget(self.image_repo))
 
-        layout.addWidget(self.title, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.title, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.subtitle, alignment=Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignTop)
+        layout.addItem(self.hbox)
         layout.addItem(spacer)
-        layout.addWidget(self.prompt_input, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addItem(vspacer)
         layout.addWidget(self.submit_prompt, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(go_image_repo, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(go_saved_images, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addItem(spacer2)
 
         self.prompt_page.setLayout(layout)
 
+    def eventFilter(self, obj, event):
+        self.is_image_added:bool
+
+        if obj in (self.prompt_input, self.prompt_page) and event.type() == QEvent.KeyPress:
+            key_event = event
+
+            if key_event.key() == Qt.Key_F2 and self.upload_btn.isHidden() == False:
+                print("F2 pressed! Hiding upload button")
+                self.is_image_added = False
+                self.upload_btn.hide()
+                self.prompt_input.setFixedWidth(350)
+                self.hbox.update()
+                return True
+            
+            elif key_event.key() == Qt.Key_F2 and self.upload_btn.isHidden() == True:
+                print("F2 pressed! Unhidding upload button")
+                self.is_image_added = True
+                self.upload_btn.show()
+                self.prompt_input.setFixedWidth(300)
+                self.hbox.update()
+                return True
+
+        return super().eventFilter(obj, event)
+    
+    def upload_file(self):
+        self.uploaded_file, _ = QFileDialog.getOpenFileName(self, "QFileDialog.getOpenFileName()", "", "All Files (*);;Text Files (*.txt)")
+        if self.uploaded_file:
+            self.upload_btn.setEnabled(False)
+            self.upload_btn.setStyleSheet("background-color: green;")
+            self.upload_btn.setText("Added!")
 
     def on_generate_press(self):
         prompt = self.prompt_input.text()
@@ -83,11 +128,21 @@ class MainWindow(QMainWindow):
             today = datetime.now().strftime("%m.%d.%y_%H:%M")
             file_name = os.path.join("images", f"{today}.png")
 
-            try: 
-                result = client.images.generate(
-                    model="gpt-image-1",
-                    prompt=prompt
-                )
+            try:
+                if self.is_image_added: 
+                    print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.uploaded_file))[0]}")
+                    result = client.images.edit(
+                        model="gpt-image-1",
+                        image=open(self.uploaded_file, "rb"),
+                        prompt=prompt
+                    )
+
+                else:
+                    print("Submitting prompt with no image")
+                    result = client.images.generate(
+                        model="gpt-image-1",
+                        prompt=prompt
+                    )
             
                 image_base64 = result.data[0].b64_json
                 image_bytes = base64.b64decode(image_base64)
@@ -114,6 +169,7 @@ class MainWindow(QMainWindow):
     def open_after_gen(self, item):
         if self.image_window is None or not self.image_window.isVisible():
             self.image_window = ImageWindow(item)
+            self.image_window.file_changed.connect(self.refresh_image_list)
         self.image_window.show()
         self.image_window.raise_()
         self.image_window.activateWindow()
@@ -302,6 +358,8 @@ class DeleteDialogueBox(QDialog):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
+    app.setApplicationName("Image Gen")
+    app.setWindowIcon(QIcon("icon.icns"))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

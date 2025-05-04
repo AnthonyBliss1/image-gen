@@ -1,5 +1,5 @@
 # Image Generator
-This project is an image generation tool that allows users to create images using OpenAI's new API.
+This project is an image generation tool that allows users to create or edit images using OpenAI's new API.
 
 ## Installation
 
@@ -32,9 +32,13 @@ This project is an image generation tool that allows users to create images usin
     ```
 
 ## Usage
-
-1. Run the application:
+1. Copy the .env template:
+   ```bash
+   cp .env.template .env
+   ```
+2. Add your OpenAI API key to the .env file
+3. Run the application:
     ```bash
     python app.py
     ```
-2. Enter a prompt to generate images.
+4. Enter a prompt to generate images.
