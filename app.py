@@ -231,7 +231,7 @@ class ImageWindow(QMainWindow):
         self.addToolBar(tool_bar)
 
         download_image = QAction("Download Image", self)
-        download_image.triggered.connect(self.save_file)
+        download_image.triggered.connect(self.download_file)
         tool_bar.addAction(download_image)
 
         edit_file_name = QAction("Change Filename", self)
@@ -271,7 +271,7 @@ class ImageWindow(QMainWindow):
         self.image_page.setLayout(layout)
 
 
-    def save_file(self):
+    def download_file(self):
         dst, _ = QFileDialog.getSaveFileName(
             self,
             "Save Image As…",
@@ -282,7 +282,6 @@ class ImageWindow(QMainWindow):
             shutil.copy(self.image, dst)
             self.statusBar().showMessage(f"Saved to {dst}", 3000)
 
-    
     def edit_file_name(self):
         # prompt for a name only
         name, ok = QInputDialog.getText(self, "File Name", "Enter filename:")
@@ -337,7 +336,7 @@ class DeleteDialogueBox(QDialog):
         image_name = os.path.basename(image)
 
         self.setFixedHeight(100)
-        
+        self.setWindowTitle("Delete File")
         QBtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
 
         self.buttonBox = QDialogButtonBox(QBtn)
