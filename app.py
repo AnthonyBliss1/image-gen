@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         self.setFixedSize(400, 200)
 
         self.image_window = None
+        self.is_image_added = False
 
         self.stack = QStackedWidget()
 
@@ -88,13 +89,11 @@ class MainWindow(QMainWindow):
         self.prompt_page.setLayout(layout)
 
     def eventFilter(self, obj, event):
-        self.is_image_added:bool
-
         if obj in (self.prompt_input, self.prompt_page) and event.type() == QEvent.KeyPress:
             key_event = event
 
             if key_event.key() == Qt.Key_F2 and self.upload_btn.isHidden() == False:
-                print("F2 pressed! Hiding upload button")
+                #print("F2 pressed! Hiding upload button")
                 self.is_image_added = False
                 self.upload_btn.hide()
                 self.prompt_input.setFixedWidth(350)
@@ -102,7 +101,7 @@ class MainWindow(QMainWindow):
                 return True
             
             elif key_event.key() == Qt.Key_F2 and self.upload_btn.isHidden() == True:
-                print("F2 pressed! Unhidding upload button")
+                #print("F2 pressed! Unhidding upload button")
                 self.is_image_added = True
                 self.upload_btn.show()
                 self.prompt_input.setFixedWidth(300)
@@ -176,11 +175,20 @@ class MainWindow(QMainWindow):
 
 
     def open_image(self, item):
-        image = os.path.join("images", item.text())
+        if type(item) is not str:
+            image = os.path.join("images", item.text())
+
+        else:
+            image = os.path.join("images", item)
 
         if self.image_window is None or not self.image_window.isVisible():
             self.image_window = ImageWindow(image)
-            self.image_window.file_changed.connect(self.refresh_image_list)
+
+        elif self.image_window.isVisible():
+            self.image_window.close()
+            self.image_window = ImageWindow(image)
+
+        self.image_window.file_changed.connect(self.refresh_image_list)
         self.image_window.show()
         self.image_window.raise_()
         self.image_window.activateWindow()
@@ -189,7 +197,8 @@ class MainWindow(QMainWindow):
     def refresh_image_list(self):
         self.saved_images.clear()
         self.saved_images.addItems([f for f in os.listdir("images") if f != ".gitkeep"])
-        print("Image list refreshed")
+        self.saved_images.sortItems()
+        #print("Image list refreshed")
 
 
     def build_image_list(self):
@@ -200,8 +209,7 @@ class MainWindow(QMainWindow):
 
         self.saved_images = QListWidget()
         self.saved_images.addItems([f for f in os.listdir("images") if f != ".gitkeep"])
-
-
+        self.saved_images.sortItems()
         self.saved_images.itemDoubleClicked.connect(self.open_image)
 
         back_btn = QPushButton("Back")
@@ -212,6 +220,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.image_repo.setLayout(layout)
+
+    def closeEvent(self, event):
+        if self.image_window.isVisible():
+            self.image_window.close()
+            
+        return super().closeEvent(event)
 
 
 class ImageWindow(QMainWindow):
@@ -242,6 +256,10 @@ class ImageWindow(QMainWindow):
         delete_image.triggered.connect(self.delete_image)
         tool_bar.addAction(delete_image)
 
+        edit_image = QAction("Edit Image", self)
+        edit_image.triggered.connect(self.edit_image)
+        tool_bar.addAction(edit_image)
+
         self.build_image_page()
 
         self.stack.addWidget(self.image_page)
@@ -252,7 +270,7 @@ class ImageWindow(QMainWindow):
         layout = QVBoxLayout()
         image_label = QLabel()
 
-        print("Opening File:", self.image)
+        #print("Opening File:", self.image)
 
         gen_image = QPixmap(self.image)
         screen = QGuiApplication.primaryScreen()
@@ -289,8 +307,14 @@ class ImageWindow(QMainWindow):
             return
 
         try:
-            os.rename(self.image, f"images/{name.strip()}.png")
+            base_name = f"{name.strip()}.png"
+            full_name = f"images/{base_name}"
+            
+            os.rename(self.image, full_name)
             self.file_changed.emit()
+            window.update()
+            self.close()
+            MainWindow.open_image(window, base_name)
 
         except OSError as e:
             self.statusBar().showMessage(f"Rename failed: {e}", 5000)
@@ -303,11 +327,56 @@ class ImageWindow(QMainWindow):
                 os.remove(self.image)
                 print(f"{os.path.basename(self.image)} Deleted")
                 self.file_changed.emit()
+                window.update()
                 self.close()
 
             except OSError as e:
                 self.statusBar().showMessage(f"Deletion failed: {e}", 5000)
         else:
+            return
+        
+    def edit_image(self):
+        while True:
+            prompt, ok = QInputDialog.getText(self, "Edit File", "Enter Prompt to Edit")
+
+            if not ok:
+                return
+
+            if prompt.strip():
+                break
+
+            msg = "Please enter a prompt"
+            dlg = DialogueBox(msg, self)
+            dlg.exec()
+
+        try:
+            print(f"Prompt: {prompt}")
+
+            today = datetime.now().strftime("%m.%d.%y_%H:%M")
+            file_name = os.path.join("images", f"{today}.png")
+
+            print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.image))[0]}")
+            result = client.images.edit(
+                model="gpt-image-1",
+                image=open(self.image, "rb"),
+                prompt=prompt
+            )
+            
+            image_base64 = result.data[0].b64_json
+            image_bytes = base64.b64decode(image_base64)
+
+            with open(file_name, "wb") as f:
+                f.write(image_bytes)
+            
+            print("File added")
+
+            self.file_changed.emit()
+            window.update()
+            self.close()
+            MainWindow.open_after_gen(window, file_name)
+
+        except OSError as e:
+            self.statusBar().showMessage(f"Edit failed: {e}", 5000)
             return
 
 class DialogueBox(QDialog):
