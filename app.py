@@ -5,11 +5,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import base64
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QDir
 from PySide6.QtGui import QPixmap, QGuiApplication, QAction, QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QFileDialog, QDialog,
-    QStackedWidget, QWidget, QSpacerItem, QSizePolicy, QListWidget, QToolBar, QInputDialog, QDialogButtonBox
+    QStackedWidget, QWidget, QSpacerItem, QSizePolicy, QListWidget, QToolBar, QDialogButtonBox
 )
 
 
@@ -111,7 +111,8 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
     
     def upload_file(self):
-        self.uploaded_file, _ = QFileDialog.getOpenFileName(self, "QFileDialog.getOpenFileName()", "", "All Files (*);;Text Files (*.txt)")
+        start_dir = QDir.homePath()
+        self.uploaded_file, _ = QFileDialog.getOpenFileName(self, "Select an image…", start_dir, "Image Files (*.png *.jpg *.jpeg)")
         if self.uploaded_file:
             self.upload_btn.setEnabled(False)
             self.upload_btn.setStyleSheet("background-color: green;")
@@ -222,7 +223,7 @@ class MainWindow(QMainWindow):
         self.image_repo.setLayout(layout)
 
     def closeEvent(self, event):
-        if self.image_window.isVisible():
+        if self.image_window is not None:
             self.image_window.close()
             
         return super().closeEvent(event)
@@ -294,16 +295,21 @@ class ImageWindow(QMainWindow):
             self,
             "Save Image As…",
             "",
-            "PNG Files (*.png);;JPEG Files (*.jpg);;All Files (*)"
+            "PNG Files (*.png)"
         )
         if dst:
             shutil.copy(self.image, dst)
             self.statusBar().showMessage(f"Saved to {dst}", 3000)
 
     def edit_file_name(self):
-        # prompt for a name only
-        name, ok = QInputDialog.getText(self, "File Name", "Enter filename:")
-        if not ok or not name.strip():
+        dlg = InputDialog("Change Filename", "Enter New Filename", self)
+        dlg.setFixedWidth(300)
+        dlg.user_input.setFixedWidth(250)
+        result = dlg.exec()
+
+        name = dlg.user_input.text().strip()
+
+        if result != QDialog.Accepted or not name:
             return
 
         try:
@@ -322,7 +328,7 @@ class ImageWindow(QMainWindow):
 
 
     def delete_image(self):        
-        if DeleteDialogueBox(self.image, self).exec() == QDialog.Accepted:
+        if DeleteDialogBox(self.image, self).exec() == QDialog.Accepted:
             try:
                 os.remove(self.image)
                 print(f"{os.path.basename(self.image)} Deleted")
@@ -337,12 +343,15 @@ class ImageWindow(QMainWindow):
         
     def edit_image(self):
         while True:
-            prompt, ok = QInputDialog.getText(self, "Edit File", "Enter Prompt to Edit")
+            dlg = InputDialog("Edit Image", "Enter Prompt to Edit Image", self)
+            result = dlg.exec()
 
-            if not ok:
+            if result != QDialog.Accepted:
                 return
 
-            if prompt.strip():
+            prompt = dlg.user_input.text().strip()
+
+            if prompt:
                 break
 
             msg = "Please enter a prompt"
@@ -383,7 +392,7 @@ class DialogueBox(QDialog):
     def __init__(self, dialogue, parent):
         super().__init__(parent)
 
-        self.setFixedSize(200, 100)
+        self.setFixedSize(200, 85)
 
         QBtn = QDialogButtonBox.Ok
 
@@ -398,7 +407,7 @@ class DialogueBox(QDialog):
         self.setLayout(layout)
 
 
-class DeleteDialogueBox(QDialog):
+class DeleteDialogBox(QDialog):
     def __init__(self, image, parent):
         super().__init__(parent)
 
@@ -421,6 +430,27 @@ class DeleteDialogueBox(QDialog):
         self.adjustSize()
 
         self.setFixedWidth(self.width())
+
+class InputDialog(QDialog):
+    def __init__(self, title, placeholder_input, parent):
+        super().__init__(parent)
+
+        self.setFixedSize(400, 100)
+        self.setWindowTitle(f"{title}")
+        QBtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+
+        self.buttonBox = QDialogButtonBox(QBtn)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        self.user_input = QLineEdit()
+        self.user_input.setPlaceholderText(f"{placeholder_input}")
+        self.user_input.setFixedWidth(350)
+        
+        layout.addWidget(self.user_input, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.buttonBox, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.setLayout(layout)
 
 
 if __name__ == "__main__":
