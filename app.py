@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
 
         self.prompt_page.setLayout(layout)
 
+
     def eventFilter(self, obj, event):
         if obj in (self.prompt_input, self.prompt_page) and event.type() == QEvent.KeyPress:
             key_event = event
@@ -110,6 +111,7 @@ class MainWindow(QMainWindow):
 
         return super().eventFilter(obj, event)
     
+
     def upload_file(self):
         start_dir = QDir.homePath()
         self.uploaded_file, _ = QFileDialog.getOpenFileName(self, "Select an image…", start_dir, "Image Files (*.png *.jpg *.jpeg)")
@@ -117,6 +119,7 @@ class MainWindow(QMainWindow):
             self.upload_btn.setEnabled(False)
             self.upload_btn.setStyleSheet("background-color: green;")
             self.upload_btn.setText("Added!")
+
 
     def on_generate_press(self):
         prompt = self.prompt_input.text()
@@ -126,7 +129,7 @@ class MainWindow(QMainWindow):
             print(f"Prompt: {prompt}")
 
             today = datetime.now().strftime("%m.%d.%y_%H:%M")
-            file_name = os.path.join("images", f"{today}.png")
+            file_name = os.path.join("images", today)
 
             try:
                 if self.is_image_added: 
@@ -147,15 +150,15 @@ class MainWindow(QMainWindow):
                 image_base64 = result.data[0].b64_json
                 image_bytes = base64.b64decode(image_base64)
 
-                with open(file_name, "wb") as f:
+                with open(f"{file_name}.png", "wb") as f:
                     f.write(image_bytes)
                 
-                print("File added")
+                #print("File added")
                 self.prompt_input.clear()
 
-                self.open_after_gen(file_name)
+                self.open_image(today)
                 self.refresh_image_list()
-                print("Image page showing")
+                #print("Image page showing")
 
             except Exception as e:
                 print("There was an error generating the image:", e)
@@ -166,21 +169,12 @@ class MainWindow(QMainWindow):
             dlg.exec()
 
 
-    def open_after_gen(self, item):
-        if self.image_window is None or not self.image_window.isVisible():
-            self.image_window = ImageWindow(item)
-            self.image_window.file_changed.connect(self.refresh_image_list)
-        self.image_window.show()
-        self.image_window.raise_()
-        self.image_window.activateWindow()
-
-
     def open_image(self, item):
         if type(item) is not str:
-            image = os.path.join("images", item.text())
+            image = os.path.join("images", f"{item.text()}.png")
 
         else:
-            image = os.path.join("images", item)
+            image = os.path.join("images", f"{item}.png")
 
         if self.image_window is None or not self.image_window.isVisible():
             self.image_window = ImageWindow(image)
@@ -197,7 +191,13 @@ class MainWindow(QMainWindow):
     
     def refresh_image_list(self):
         self.saved_images.clear()
-        self.saved_images.addItems([f for f in os.listdir("images") if f != ".gitkeep"])
+
+        items = [
+        os.path.splitext(f)[0]
+        for f in os.listdir("images") if f != ".gitkeep"
+        ]
+
+        self.saved_images.addItems(items)
         self.saved_images.sortItems()
         #print("Image list refreshed")
 
@@ -209,7 +209,13 @@ class MainWindow(QMainWindow):
         #title.setStyleSheet("font-size: 14px; font-style: bold;")
 
         self.saved_images = QListWidget()
-        self.saved_images.addItems([f for f in os.listdir("images") if f != ".gitkeep"])
+
+        items = [
+        os.path.splitext(f)[0]
+        for f in os.listdir("images") if f != ".gitkeep"
+        ]
+
+        self.saved_images.addItems(items)
         self.saved_images.sortItems()
         self.saved_images.itemDoubleClicked.connect(self.open_image)
 
@@ -221,6 +227,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self.image_repo.setLayout(layout)
+
 
     def closeEvent(self, event):
         if self.image_window is not None:
@@ -245,9 +252,9 @@ class ImageWindow(QMainWindow):
         tool_bar.setMovable(False)
         self.addToolBar(tool_bar)
 
-        download_image = QAction("Download Image", self)
-        download_image.triggered.connect(self.download_file)
-        tool_bar.addAction(download_image)
+        export_image = QAction("Export Image", self)
+        export_image.triggered.connect(self.export_file)
+        tool_bar.addAction(export_image)
 
         edit_file_name = QAction("Change Filename", self)
         edit_file_name.triggered.connect(self.edit_file_name)
@@ -290,19 +297,15 @@ class ImageWindow(QMainWindow):
         self.image_page.setLayout(layout)
 
 
-    def download_file(self):
-        dst, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Image As…",
-            "",
-            "PNG Files (*.png)"
-        )
+    def export_file(self):
+        start_dir = QDir.homePath()
+        dst, _ = QFileDialog.getSaveFileName(self, "Save Image As…", start_dir, "PNG Files (*.png)")
         if dst:
             shutil.copy(self.image, dst)
             self.statusBar().showMessage(f"Saved to {dst}", 3000)
 
     def edit_file_name(self):
-        dlg = InputDialog("Change Filename", "Enter New Filename", self)
+        dlg = InputDialog("Change Filename", f"{os.path.splitext(os.path.basename(self.image))[0]}", self)
         dlg.setFixedWidth(300)
         dlg.user_input.setFixedWidth(250)
         result = dlg.exec()
@@ -313,8 +316,8 @@ class ImageWindow(QMainWindow):
             return
 
         try:
-            base_name = f"{name.strip()}.png"
-            full_name = f"images/{base_name}"
+            base_name = name.strip()
+            full_name = f"images/{base_name}.png"
             
             os.rename(self.image, full_name)
             self.file_changed.emit()
@@ -325,7 +328,6 @@ class ImageWindow(QMainWindow):
         except OSError as e:
             self.statusBar().showMessage(f"Rename failed: {e}", 5000)
             return
-
 
     def delete_image(self):        
         if DeleteDialogBox(self.image, self).exec() == QDialog.Accepted:
@@ -362,7 +364,7 @@ class ImageWindow(QMainWindow):
             print(f"Prompt: {prompt}")
 
             today = datetime.now().strftime("%m.%d.%y_%H:%M")
-            file_name = os.path.join("images", f"{today}.png")
+            file_name = os.path.join("images", today)
 
             print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.image))[0]}")
             result = client.images.edit(
@@ -374,19 +376,20 @@ class ImageWindow(QMainWindow):
             image_base64 = result.data[0].b64_json
             image_bytes = base64.b64decode(image_base64)
 
-            with open(file_name, "wb") as f:
+            with open(f"{file_name}.png", "wb") as f:
                 f.write(image_bytes)
             
-            print("File added")
+            #print("File added")
 
             self.file_changed.emit()
             window.update()
             self.close()
-            MainWindow.open_after_gen(window, file_name)
+            MainWindow.open_image(window, today)
 
         except OSError as e:
             self.statusBar().showMessage(f"Edit failed: {e}", 5000)
             return
+
 
 class DialogueBox(QDialog):
     def __init__(self, dialogue, parent):
@@ -430,6 +433,7 @@ class DeleteDialogBox(QDialog):
         self.adjustSize()
 
         self.setFixedWidth(self.width())
+
 
 class InputDialog(QDialog):
     def __init__(self, title, placeholder_input, parent):
