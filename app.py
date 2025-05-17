@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_image_generated(self, today):
+        # TODO need to reset the "Add File" button after its used
         self.prompt_input.clear()
         self.prompt_input.setReadOnly(False)
         self.spinner_overlay.hide()
@@ -276,10 +277,10 @@ class Worker(QRunnable):
 
         try:
             if self.is_image_added: 
-                print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.uploaded_file))[0]}")
+                print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.image_path))[0]}")
                 result = client.images.edit(
                     model="gpt-image-1",
-                    image=open(self.uploaded_file, "rb"),
+                    image=open(self.image_path, "rb"),
                     prompt=self.prompt
                 )
 
@@ -310,6 +311,8 @@ class ImageWindow(QMainWindow):
         super().__init__()
 
         self.image = image
+
+        self.is_image_added = True
         
         self.stack = QStackedWidget()
         self.image_page = QWidget()
@@ -335,6 +338,7 @@ class ImageWindow(QMainWindow):
         tool_bar.addAction(edit_image)
 
         self.build_image_page()
+        self.build_spinner_overlay()
 
         self.stack.addWidget(self.image_page)
         self.setCentralWidget(self.stack)
@@ -361,6 +365,32 @@ class ImageWindow(QMainWindow):
         layout.addWidget(image_label)
         layout.setContentsMargins(0, 0, 0, 0)
         self.image_page.setLayout(layout)
+
+
+    def build_spinner_overlay(self):
+        self.spinner_overlay = QWidget(self.image_page)
+        self.spinner_overlay.setAttribute(Qt.WA_StyledBackground, True)
+        self.spinner_overlay.setStyleSheet("background: rgba(255,255,255,200);")
+
+        self.image_page.installEventFilter(self)
+
+        layout = QVBoxLayout(self.spinner_overlay)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.spinner = CustomSpinner(self.spinner_overlay)
+        layout.addWidget(self.spinner)
+
+        self.spinner_overlay.setLayout(layout)
+
+        self.spinner_overlay.hide()
+
+
+    def eventFilter(self, obj, event):
+        if obj is self.image_page and event.type() in (QEvent.Resize, QEvent.Move):
+            self.spinner_overlay.setGeometry(0, 0, self.image_page.width(), self.image_page.height())
+
+        return super().eventFilter(obj, event)
 
 
     def export_file(self):
@@ -429,32 +459,37 @@ class ImageWindow(QMainWindow):
         try:
             print(f"Prompt: {prompt}")
 
-            today = datetime.now().strftime("%m.%d.%y_%H:%M")
-            file_name = os.path.join("images", today)
+            self.spinner_overlay.show()
 
-            print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.image))[0]}")
-            result = client.images.edit(
-                model="gpt-image-1",
-                image=open(self.image, "rb"),
-                prompt=prompt
+            runnable = Worker(
+            prompt = prompt,
+            image_path = self.image,
+            is_image_added = self.is_image_added,
+            client = client
             )
-            
-            image_base64 = result.data[0].b64_json
-            image_bytes = base64.b64decode(image_base64)
 
-            with open(f"{file_name}.png", "wb") as f:
-                f.write(image_bytes)
-            
-            #print("File added")
+            runnable.signals.finished.connect(self.on_image_generated)
+            runnable.signals.error.connect(self.on_generation_error)
 
-            self.file_changed.emit()
-            window.update()
-            self.close()
-            MainWindow.open_image(window, today)
+            QThreadPool.globalInstance().start(runnable)
 
         except OSError as e:
             self.statusBar().showMessage(f"Edit failed: {e}", 5000)
             return
+        
+    @Slot(str)
+    def on_image_generated(self, today):
+        self.spinner_overlay.hide()
+        self.file_changed.emit()
+        window.update()
+        self.close()
+        MainWindow.open_image(window, today)
+
+    @Slot(Exception)
+    def on_generation_error(self, ex):
+        self.spinner_overlay.hide()
+        print("Error:", ex)
+        DialogueBox(f"Error generating image:\n{ex}", self).exec()
 
 
 class DialogueBox(QDialog):
