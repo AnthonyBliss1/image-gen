@@ -5,8 +5,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import base64
-from PySide6.QtCore import Qt, Signal, QEvent, QDir
-from PySide6.QtGui import QPixmap, QGuiApplication, QAction, QIcon
+from PySide6.QtCore import Qt, Signal, QEvent, QDir, QObject, QRunnable, QThreadPool, Slot, QTimer
+from PySide6.QtGui import QPixmap, QGuiApplication, QAction, QIcon, QPainter, QColor
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QFileDialog, QDialog,
     QStackedWidget, QWidget, QSpacerItem, QSizePolicy, QListWidget, QToolBar, QDialogButtonBox
@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
 
         self.build_image_gen()
         self.build_image_list()
+        self.build_spinner_overlay()
 
         self.stack.addWidget(self.prompt_page)
         self.stack.addWidget(self.image_repo)
@@ -109,6 +110,9 @@ class MainWindow(QMainWindow):
                 self.hbox.update()
                 return True
 
+        elif obj is self.prompt_page and event.type() in (QEvent.Resize, QEvent.Move):
+            self.spinner_overlay.setGeometry(0, 0, self.prompt_page.width(), self.prompt_page.height())
+
         return super().eventFilter(obj, event)
     
 
@@ -128,45 +132,40 @@ class MainWindow(QMainWindow):
 
             print(f"Prompt: {prompt}")
 
-            today = datetime.now().strftime("%m.%d.%y_%H:%M")
-            file_name = os.path.join("images", today)
+            self.prompt_input.setReadOnly(True)
+            self.spinner_overlay.show()
 
-            try:
-                if self.is_image_added: 
-                    print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.uploaded_file))[0]}")
-                    result = client.images.edit(
-                        model="gpt-image-1",
-                        image=open(self.uploaded_file, "rb"),
-                        prompt=prompt
-                    )
+            runnable = Worker(
+            prompt = prompt,
+            image_path = getattr(self, 'uploaded_file', None),
+            is_image_added = self.is_image_added,
+            client = client
+            )
 
-                else:
-                    print("Submitting prompt with no image")
-                    result = client.images.generate(
-                        model="gpt-image-1",
-                        prompt=prompt
-                    )
-            
-                image_base64 = result.data[0].b64_json
-                image_bytes = base64.b64decode(image_base64)
+            runnable.signals.finished.connect(self.on_image_generated)
+            runnable.signals.error.connect(self.on_generation_error)
 
-                with open(f"{file_name}.png", "wb") as f:
-                    f.write(image_bytes)
-                
-                #print("File added")
-                self.prompt_input.clear()
-
-                self.open_image(today)
-                self.refresh_image_list()
-                #print("Image page showing")
-
-            except Exception as e:
-                print("There was an error generating the image:", e)
+            QThreadPool.globalInstance().start(runnable)
 
         else:
             msg = "Please enter a prompt"
             dlg = DialogueBox(msg, self)
             dlg.exec()
+
+
+    @Slot(str)
+    def on_image_generated(self, today):
+        self.prompt_input.clear()
+        self.prompt_input.setReadOnly(False)
+        self.spinner_overlay.hide()
+        self.open_image(today)
+        self.refresh_image_list()
+
+    @Slot(Exception)
+    def on_generation_error(self, ex):
+        self.spinner_overlay.hide()
+        print("Error:", ex)
+        DialogueBox(f"Error generating image:\n{ex}", self).exec()
 
 
     def open_image(self, item):
@@ -234,6 +233,73 @@ class MainWindow(QMainWindow):
             self.image_window.close()
             
         return super().closeEvent(event)
+
+
+    def build_spinner_overlay(self):
+        self.spinner_overlay = QWidget(self.prompt_page)
+        self.spinner_overlay.setAttribute(Qt.WA_StyledBackground, True)
+        self.spinner_overlay.setStyleSheet("background: rgba(255,255,255,200);")
+
+        self.prompt_page.installEventFilter(self)
+
+        layout = QVBoxLayout(self.spinner_overlay)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.spinner = CustomSpinner(self.spinner_overlay)
+        layout.addWidget(self.spinner)
+
+        self.spinner_overlay.setLayout(layout)
+
+        self.spinner_overlay.hide()
+
+
+class WorkerSignals(QObject):
+    finished = Signal(str)
+    error = Signal(Exception)
+
+
+class Worker(QRunnable):
+    def __init__(self, prompt, image_path, is_image_added, client):
+        super().__init__()
+        
+        self.signals = WorkerSignals()
+        self.prompt = prompt
+        self.image_path = image_path
+        self.is_image_added = is_image_added
+        self.client = client
+    
+    def run(self):
+
+        today = datetime.now().strftime("%m.%d.%y_%H:%M")
+        file_name = os.path.join("images", today)
+
+        try:
+            if self.is_image_added: 
+                print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.uploaded_file))[0]}")
+                result = client.images.edit(
+                    model="gpt-image-1",
+                    image=open(self.uploaded_file, "rb"),
+                    prompt=self.prompt
+                )
+
+            else:
+                print("Submitting prompt with no image")
+                result = client.images.generate(
+                    model="gpt-image-1",
+                    prompt=self.prompt
+                )
+        
+            image_base64 = result.data[0].b64_json
+            image_bytes = base64.b64decode(image_base64)
+
+            with open(f"{file_name}.png", "wb") as f:
+                f.write(image_bytes)
+            
+            self.signals.finished.emit(today)
+
+        except Exception as e:
+            self.signals.error.emit(e)
 
 
 class ImageWindow(QMainWindow):
@@ -455,6 +521,41 @@ class InputDialog(QDialog):
         layout.addWidget(self.user_input, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.buttonBox, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.setLayout(layout)
+
+
+class CustomSpinner(QWidget):
+    def __init__(self, parent=None, line_count=10, line_length=10, line_width=10, radius=20, interval=80):
+        super().__init__(parent)
+        self._angle = 0
+        self.line_count = line_count
+        self.line_length = line_length
+        self.line_width = line_width
+        self.radius = radius
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._rotate)
+        self._timer.start(interval)
+
+        diameter = (radius + line_length) * 2
+        self.setFixedSize(diameter, diameter)
+
+    def _rotate(self):
+        self._angle = (self._angle + (360 / self.line_count)) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.translate(self.width()/2, self.height()/2)
+        painter.rotate(self._angle)
+
+        for i in range(self.line_count):
+            color = QColor(0, 0, 0) 
+            color.setAlphaF((i + 1) / self.line_count)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(self.radius, -self.line_width/2, self.line_length, self.line_width, self.line_width/2, self.line_width/2)
+            painter.rotate(360 / self.line_count)
 
 
 if __name__ == "__main__":
