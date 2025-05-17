@@ -96,6 +96,7 @@ class MainWindow(QMainWindow):
 
             if key_event.key() == Qt.Key_F2 and self.upload_btn.isHidden() == False:
                 #print("F2 pressed! Hiding upload button")
+                self.reset_upload_btn()
                 self.is_image_added = False
                 self.upload_btn.hide()
                 self.prompt_input.setFixedWidth(350)
@@ -115,6 +116,20 @@ class MainWindow(QMainWindow):
 
         return super().eventFilter(obj, event)
     
+
+    def reset_upload_btn(self):
+        self.upload_btn.hide()
+        self.prompt_input.setFixedWidth(350)
+        self.hbox.update()
+        self.uploaded_file = None
+        self.upload_btn.setText("Add File")
+        self.upload_btn.setEnabled(True)
+        self.setStyleSheet("")
+        self.upload_btn.setProperty("styleSheet", None)
+        self.upload_btn.style().unpolish(self.upload_btn)
+        self.upload_btn.style().polish(self.upload_btn)
+        self.upload_btn.update()
+
 
     def upload_file(self):
         start_dir = QDir.homePath()
@@ -155,7 +170,7 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def on_image_generated(self, today):
-        # TODO need to reset the "Add File" button after its used
+        self.reset_upload_btn()
         self.prompt_input.clear()
         self.prompt_input.setReadOnly(False)
         self.spinner_overlay.hide()
@@ -276,7 +291,7 @@ class Worker(QRunnable):
         file_name = os.path.join("images", today)
 
         try:
-            if self.is_image_added: 
+            if self.is_image_added and self.image_path is not None: 
                 print(f"Submitting prompt with {os.path.splitext(os.path.basename(self.image_path))[0]}")
                 result = client.images.edit(
                     model="gpt-image-1",
