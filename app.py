@@ -2,7 +2,7 @@ import os
 import sys
 import shutil
 from datetime import datetime
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from openai import OpenAI
 import base64
 from PySide6.QtCore import Qt, Signal, QEvent, QDir, QObject, QRunnable, QThreadPool, Slot, QTimer
@@ -13,8 +13,14 @@ from PySide6.QtWidgets import (
 )
 
 
-load_dotenv()
-api_key = os.getenv("OPENAI_API")
+if getattr(sys, "frozen", False):
+    base = os.path.dirname(sys.executable)
+else:
+    base = os.path.dirname(__file__)
+
+load_dotenv(os.path.join(base, ".env"), override=True)
+
+api_key = os.getenv("OPENAI_API_KEY", "")
 client = OpenAI(api_key=api_key)
 
 
@@ -30,16 +36,24 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         self.prompt_page = QWidget()
+        self.prompt_page.setStyleSheet("background-color: #344361; color: white;")
         self.prompt_page.installEventFilter(self)
         
         self.image_repo = QWidget()
+        self.image_repo.setStyleSheet("background-color: #344361; color: white;")
+
+        self.env_page = QWidget()
+        self.env_page.setStyleSheet("background-color: #344361; color: white;")
+        self.env_page.installEventFilter(self)
 
         self.build_image_gen()
         self.build_image_list()
+        self.build_env_page()
         self.build_spinner_overlay()
 
         self.stack.addWidget(self.prompt_page)
         self.stack.addWidget(self.image_repo)
+        self.stack.addWidget(self.env_page)
         self.setCentralWidget(self.stack)
 
 
@@ -57,6 +71,7 @@ class MainWindow(QMainWindow):
         self.prompt_input = QLineEdit()
         self.prompt_input.setPlaceholderText("Describe your image...")
         self.prompt_input.setFixedWidth(350)
+        self.prompt_input.setStyleSheet("background-color: #262626;")
         self.prompt_input.installEventFilter(self)
 
         self.upload_btn = QPushButton("Add File")
@@ -89,6 +104,68 @@ class MainWindow(QMainWindow):
 
         self.prompt_page.setLayout(layout)
 
+    
+    def build_env_page(self):
+        layout = QVBoxLayout()
+
+        title = QLabel("Set Your API Key")
+        title.setStyleSheet("font-size: 28px; font-style: italic; font-style: bold;")
+
+        label = QLabel("👇 Open AI API Key 👇")
+        label.setStyleSheet("font-size: 12px; font-style: italic;")
+
+        if api_key != '':
+            visible_part = api_key[:8]
+            masked_part = '*' * 48
+            display_text = visible_part + masked_part
+
+        else:
+            display_text = ''
+
+        self.key_input = QLineEdit()
+        self.key_input.setFixedWidth(350)
+        self.key_input.setStyleSheet("background-color: #262626;")
+        self.key_input.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.key_input.setPlaceholderText(display_text)
+
+        btn = QPushButton("Set Key")
+        btn.clicked.connect(self.show_dialog_and_switch)
+
+        layout.addItem(QSpacerItem(20, 10))
+        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addItem(QSpacerItem(20, 5))
+        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addItem(QSpacerItem(20, 5, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
+        layout.addWidget(self.key_input, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addItem(QSpacerItem(20, 10))
+        layout.addWidget(btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addItem(QSpacerItem(20, 10, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed))
+
+        self.env_page.setLayout(layout)
+
+
+    def show_dialog_and_switch(self):
+        if self.key_input.text() != '':
+            new_key = self.key_input.text()
+            set_key(".env", "OPENAI_API", new_key)
+            load_dotenv(override=True)
+            
+            global api_key, client
+            api_key = os.getenv("OPENAI_API")
+            client  = OpenAI(api_key=api_key)
+
+            visible_part = api_key[:8]
+            masked_part = '*' * 48
+            display_text = visible_part + masked_part
+
+            self.key_input.setPlaceholderText(display_text)
+            self.key_input.clear()
+            
+            DialogueBox("Your OpenAI API key is set!", self).exec()
+            self.stack.setCurrentWidget(self.prompt_page)
+        else:
+            DialogueBox("Please enter a valid API key", self).exec()
+        
 
     def eventFilter(self, obj, event):
         if obj in (self.prompt_input, self.prompt_page) and event.type() == QEvent.KeyPress:
@@ -110,9 +187,16 @@ class MainWindow(QMainWindow):
                 self.prompt_input.setFixedWidth(300)
                 self.hbox.update()
                 return True
+            
+            elif key_event.key() == Qt.Key_F3:
+                self.stack.setCurrentWidget(self.env_page)
 
         elif obj is self.prompt_page and event.type() in (QEvent.Resize, QEvent.Move):
             self.spinner_overlay.setGeometry(0, 0, self.prompt_page.width(), self.prompt_page.height())
+
+        elif obj is self.env_page and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_F3:
+                self.stack.setCurrentWidget(self.prompt_page)
 
         return super().eventFilter(obj, event)
     
@@ -141,9 +225,13 @@ class MainWindow(QMainWindow):
 
 
     def on_generate_press(self):
+        if api_key == '':
+            DialogueBox("You must set your OpenAI API key to use the app", self).exec()
+            self.stack.setCurrentWidget(self.env_page)
+
         prompt = self.prompt_input.text()
 
-        if prompt: 
+        if prompt and api_key: 
 
             print(f"Prompt: {prompt}")
 
@@ -162,7 +250,7 @@ class MainWindow(QMainWindow):
 
             QThreadPool.globalInstance().start(runnable)
 
-        else:
+        elif prompt == '' and api_key:
             msg = "Please enter a prompt"
             dlg = DialogueBox(msg, self)
             dlg.exec()
@@ -186,17 +274,18 @@ class MainWindow(QMainWindow):
 
     def open_image(self, item):
         if type(item) is not str:
-            image = os.path.join("images", f"{item.text()}.png")
+            image = os.path.join(base, "images", f"{item.text()}.png")
 
         else:
-            image = os.path.join("images", f"{item}.png")
+            image = os.path.join(base, "images", f"{item}.png")
 
         if self.image_window is None or not self.image_window.isVisible():
             self.image_window = ImageWindow(image)
 
         elif self.image_window.isVisible():
-            self.image_window.close()
-            self.image_window = ImageWindow(image)
+            if self.image_window.spinner_overlay.isHidden():
+                self.image_window.close()
+                self.image_window = ImageWindow(image)
 
         self.image_window.file_changed.connect(self.refresh_image_list)
         self.image_window.show()
@@ -209,7 +298,7 @@ class MainWindow(QMainWindow):
 
         items = [
         os.path.splitext(f)[0]
-        for f in os.listdir("images") if f != ".gitkeep"
+        for f in os.listdir(os.path.join(base, "images")) if f != ".gitkeep"
         ]
 
         self.saved_images.addItems(items)
@@ -224,10 +313,29 @@ class MainWindow(QMainWindow):
         #title.setStyleSheet("font-size: 14px; font-style: bold;")
 
         self.saved_images = QListWidget()
+        self.saved_images.setStyleSheet("""
+            QListWidget {
+                background-color: #262626;
+            }
+            QScrollBar:vertical {
+                background: #515151;
+                width: 10px;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #888;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
 
         items = [
         os.path.splitext(f)[0]
-        for f in os.listdir("images") if f != ".gitkeep"
+        for f in os.listdir(os.path.join(base, "images")) if f != ".gitkeep"
         ]
 
         self.saved_images.addItems(items)
@@ -288,7 +396,7 @@ class Worker(QRunnable):
     def run(self):
 
         today = datetime.now().strftime("%m.%d.%y_%H:%M")
-        file_name = os.path.join("images", today)
+        file_name = os.path.join(base, "images", today)
 
         try:
             if self.is_image_added and self.image_path is not None: 
@@ -303,7 +411,8 @@ class Worker(QRunnable):
                 print("Submitting prompt with no image")
                 result = client.images.generate(
                     model="gpt-image-1",
-                    prompt=self.prompt
+                    prompt=self.prompt,
+                    quality="high"
                 )
         
             image_base64 = result.data[0].b64_json
@@ -334,6 +443,7 @@ class ImageWindow(QMainWindow):
 
         tool_bar = QToolBar()
         tool_bar.setMovable(False)
+        tool_bar.setStyleSheet("background-color: #3b3b3b; color: white;")
         self.addToolBar(tool_bar)
 
         export_image = QAction("Export Image", self)
@@ -428,7 +538,7 @@ class ImageWindow(QMainWindow):
 
         try:
             base_name = name.strip()
-            full_name = f"images/{base_name}.png"
+            full_name = os.path.join(base, "images", f"{base_name}.png")
             
             os.rename(self.image, full_name)
             self.file_changed.emit()
@@ -511,7 +621,8 @@ class DialogueBox(QDialog):
     def __init__(self, dialogue, parent):
         super().__init__(parent)
 
-        self.setFixedSize(200, 85)
+        self.setFixedHeight(85)
+        self.setStyleSheet("background-color: #3b3b3b; color: white;")
 
         QBtn = QDialogButtonBox.Ok
 
@@ -525,6 +636,10 @@ class DialogueBox(QDialog):
         layout.addWidget(self.buttonBox, alignment=Qt.AlignmentFlag.AlignHCenter)
         self.setLayout(layout)
 
+        self.adjustSize()
+
+        self.setFixedWidth(self.width())
+
 
 class DeleteDialogBox(QDialog):
     def __init__(self, image, parent):
@@ -534,6 +649,7 @@ class DeleteDialogBox(QDialog):
 
         self.setFixedHeight(100)
         self.setWindowTitle("Delete File")
+        self.setStyleSheet("background-color: #3b3b3b; color: white;")
         QBtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
 
         self.buttonBox = QDialogButtonBox(QBtn)
@@ -557,6 +673,7 @@ class InputDialog(QDialog):
 
         self.setFixedSize(400, 100)
         self.setWindowTitle(f"{title}")
+        self.setStyleSheet("background-color: #3b3b3b; color: white;")
         QBtn = QDialogButtonBox.Ok | QDialogButtonBox.Cancel
 
         self.buttonBox = QDialogButtonBox(QBtn)
@@ -567,6 +684,7 @@ class InputDialog(QDialog):
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText(f"{placeholder_input}")
         self.user_input.setFixedWidth(350)
+        self.user_input.setStyleSheet("background-color: #262626;")
         
         layout.addWidget(self.user_input, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.buttonBox, alignment=Qt.AlignmentFlag.AlignHCenter)
